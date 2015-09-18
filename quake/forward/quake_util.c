@@ -212,10 +212,10 @@ parsedarray( FILE* fp, const char* querystring, int size, double* array )
  *
  *\Return 1 if true, 0 otherwise.
  */
-int vsrule( edata_t *edata, double theFactor )
+int vsrule(float edgesize, float min_vs, double theFactor )
 {
 
-    if (edata->edgesize <= edata->Vs / theFactor) {
+    if (edgesize <= min_vs / theFactor) {
 
         return 0;
 

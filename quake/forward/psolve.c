@@ -191,7 +191,7 @@ static int     interpolate_station_displacements(int32_t step);
 
 /* These are all of the input parameters - add new ones here */
 static struct Param_t {
-    char  FourDOutFile[256]; 
+    char  FourDOutFile[256];
     FILE*  FourDOutFp;
     FILE*  theMonitorFileFp;
     char*  theMonitorFileName;
@@ -251,7 +251,7 @@ static struct Param_t {
     char  theCVMFlatFile[128];
     output_parameters_t  theOutputParameters;
     double  theRegionLong;
-    double  theRegionLat; 
+    double  theRegionLat;
     double  theRegionDepth;
     double  region_depth_deep_m;
     double  theSurfaceCornersLong[4];
@@ -1318,6 +1318,11 @@ setrec( octant_t* leaf, double ticksize, void* data )
     int res = 0;
     edata_t* edata = (edata_t*)data;
 
+    float vp, vs, rho;
+    vp = 0;
+    vs = 0;
+    rho = 0;
+
     points[0] = 0.01;
     points[1] = 1;
     points[2] = 1.99;
@@ -1338,59 +1343,66 @@ setrec( octant_t* leaf, double ticksize, void* data )
 
     for ( i_x = 0; i_x < n_points; i_x++ ) {
 
-	x_m = (Global.theXForMeshOrigin
-	       + (leaf->lx + points[i_x] * halfticks) * ticksize);
+    	x_m = (Global.theXForMeshOrigin
+    			+ (leaf->lx + points[i_x] * halfticks) * ticksize);
 
-	for ( i_y = 0; i_y < n_points; i_y++ ) {
+    	for ( i_y = 0; i_y < n_points; i_y++ ) {
 
-	    y_m  = Global.theYForMeshOrigin
-		+ (leaf->ly + points[i_y] * halfticks) * ticksize;
+    		y_m  = Global.theYForMeshOrigin
+    				+ (leaf->ly + points[i_y] * halfticks) * ticksize;
 
-	    for ( i_z = 0; i_z < n_points; i_z++) {
+    		for ( i_z = 0; i_z < n_points; i_z++) {
 
-		z_m = Global.theZForMeshOrigin
-		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
+    			z_m = Global.theZForMeshOrigin
+    					+ (leaf->lz +  points[i_z] * halfticks) * ticksize;
 
-		/* Shift the domain if buildings are considered */
-		if ( Param.includeBuildings == YES ) {
-                    z_m -= get_surface_shift();
-		}
+    			/* Shift the domain if buildings are considered */
+    			if ( Param.includeBuildings == YES ) {
+    				z_m -= get_surface_shift();
+    			}
 
-		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+    			res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
 
-		if (res != 0) {
-		    continue;
-		}
+    			if (res != 0) {
+    				continue;
+    			}
 
-		if ( g_props.Vs < g_props_min.Vs ) {
-		    /* assign minimum value of vs to produce elements
-		     * that are small enough to rightly represent the model */
-		    g_props_min = g_props;
-		}
+    			vp += g_props.Vp;
+    			vs += g_props.Vs;
+    			rho += g_props.rho;
 
-		if (g_props.Vs <= Param.theVsCut) {
-		    /* stop early if needed, completely break out of all
-		     * the loops, the label is just outside the loop */
-		    goto outer_loop_label;
-		}
-	    }
-	}
+
+    			if ( g_props.Vs < g_props_min.Vs ) {
+    				/* assign minimum value of vs to produce elements
+    				 * that are small enough to rightly represent the model */
+    				g_props_min = g_props;
+    			}
+
+    			if (g_props.Vs <= Param.theVsCut) {
+    				/* stop early if needed, completely break out of all
+    				 * the loops, the label is just outside the loop */
+    				goto outer_loop_label;
+    			}
+    		}
+    	}
     }
  outer_loop_label: /* in order to completely break out from the inner loop */
 
-    edata->Vp  = g_props_min.Vp;
-    edata->Vs  = g_props_min.Vs;
-    edata->rho = g_props_min.rho;
+    edata->Vp  = vp/27;
+    edata->Vs  = vs/27;
+    edata->rho = rho/27;
+    leaf->min_vs =  g_props_min.Vs;
+
 
     if (res != 0 && g_props_min.Vs == DBL_MAX) {
-	/* all the queries failed, then center out of bound point. Set Vs
-	 * to force split */
-	edata->Vs = Param.theFactor * edata->edgesize / 2;
+    	/* all the queries failed, then center out of bound point. Set Vs
+    	 * to force split */
+    	edata->Vs = Param.theFactor * edata->edgesize / 2;
     } else if (edata->Vs <= Param.theVsCut) {	/* adjust Vs and Vp */
-	double VpVsRatio = edata->Vp / edata->Vs;
+    	double VpVsRatio = edata->Vp / edata->Vs;
 
-	edata->Vs = Param.theVsCut;
-	edata->Vp = Param.theVsCut * VpVsRatio;
+    	edata->Vs = Param.theVsCut;
+    	edata->Vp = Param.theVsCut * VpVsRatio;
     }
 
     return;
@@ -2190,6 +2202,10 @@ toexpand(octant_t *leaf, double ticksize, const void *data) {
 
 	int      res;
 	edata_t *edata = (edata_t *)data;
+	float min_vs;
+	min_vs = leaf->min_vs;
+	float edgesize;
+	edgesize = edata->edgesize;
 
 	if ( Param.includeBuildings == YES ) {
 		res = bldgs_toexpand( leaf, ticksize, edata, Param.theFactor );
@@ -2206,7 +2222,8 @@ toexpand(octant_t *leaf, double ticksize, const void *data) {
 		}
 	}
 
-	return vsrule( edata, Param.theFactor );
+	return vsrule(edgesize, min_vs, Param.theFactor);
+//	return vsrule(edata->edgesize, min_vs, Param.theFactor );
 }
 
 /**
@@ -7140,7 +7157,7 @@ mesh_correct_properties( etree_t* cvm )
             }
         }
 
-        vp  = 0;
+/*        vp  = 0;
         vs  = 0;
         rho = 0;
 
@@ -7156,14 +7173,14 @@ mesh_correct_properties( etree_t* cvm )
         				+ edata->edgesize * points[iEast] + Global.theYForMeshOrigin  );
 
         		for (iDepth = 0; iDepth < numPoints; iDepth++) {
-        			cvmpayload_t g_props; /* ground properties record */
+        			cvmpayload_t g_props;  ground properties record
 
         			depth_m = ( (Global.myMesh->ticksize)
         					* (double)Global.myMesh->nodeTable[lnid0].z
         					+ edata->edgesize * points[iDepth] + Global.theZForMeshOrigin );
 
-        			/* NOTE: If you want to see the carving process,
-        			 *       activate this and comment the query below */
+        			 NOTE: If you want to see the carving process,
+        			 *       activate this and comment the query below
         			if ( Param.includeBuildings == YES ) {
         				//                        if ( depth_m < get_surface_shift() ) {
         				//                            g_props.Vp  = NAN;
@@ -7193,7 +7210,7 @@ mesh_correct_properties( etree_t* cvm )
 
         edata->Vp  =  vp / 27;
         edata->Vs  =  vs / 27;
-        edata->rho = rho / 27;
+        edata->rho = rho / 27;*/
 
         /* Auxiliary ratios for adjustments */
         VpVsRatio  = edata->Vp  / edata->Vs;

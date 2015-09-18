@@ -70,6 +70,7 @@ typedef struct octant_t {
     int8_t which;           /* which child of the parent */
     int8_t level;           /* Root is at level 0 */
     tick_t lx, ly, lz;      /* left-lower corner coordinate */
+    float min_vs;
     struct octant_t *parent;/* pointer to the parent */
     void *appdata;          /* pointer to application-specific data */
 } octant_t;

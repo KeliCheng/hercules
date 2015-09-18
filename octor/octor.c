@@ -250,6 +250,7 @@ typedef  struct oct_t {
     int8_t which;           /* which child of the parent */
     int8_t level;           /* Root is at level 0 */
     tick_t lx, ly, lz;      /* left-lower corner coordinate */
+    float min_vs;
     struct oct_t *parent;   /* pointer to the parent */
     void *appdata;          /* pointer to application-specific data */
 
@@ -4106,6 +4107,10 @@ octor_newtree(double x, double y, double z, int32_t recsize,
     tree->root->ly = 0;
     tree->root->lz = 0;
     tree->root->appdata = NULL;
+//    tree->root->vs = FLT_MAX;
+//    tree->root->vp = NAN;
+//    tree->root->rho = NAN;
+
 
     tree->root->parent = NULL;
     tree->root->payload.leaf = NULL;
