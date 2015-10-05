@@ -132,7 +132,7 @@ typedef struct mrecord_t {
 
 /* Mesh generation related routines */
 static int32_t toexpand(octant_t *leaf, double ticksize, const void *data);
-static void    setrec(octant_t *leaf, double ticksize, void *data);
+static void    setrec(octant_t *leaf, double ticksize, void *data, int mode);
 static void    mesh_generate(void);
 static int32_t bulkload(etree_t *mep, mrecord_t *partTable, int32_t count);
 static void    mesh_output(void);
@@ -1297,20 +1297,20 @@ replicateDB(const char *dbname)
     return ;
 }
 
-
-
 /**
- * Assign values (material properties) to a leaf octant specified by
+ * Assign values (average material properties) to a leaf octant specified by
  * octleaf.  In order to refine the mesh, select the minimum Vs of 27
  * sample points: 8 near the corners and 19 midpoints.
+ * mode = 1 use the midpoint only
+ * mode = 27 use 27 points and take the average
  */
 static void
-setrec( octant_t* leaf, double ticksize, void* data )
+setrec( octant_t* leaf, double ticksize, void* data, int mode)
 {
     double x_m, y_m, z_m;	/* x:south-north, y:east-west, z:depth */
     tick_t halfticks;
     cvmpayload_t g_props;	/* cvm record with ground properties */
-    cvmpayload_t g_props_min;	/* cvm record with the min Vs found */
+    float g_props_vs_min;	/* cvm record with the min Vs found */
 
     int i_x, i_y, i_z, n_points = 3;
     double points[3];
@@ -1323,9 +1323,15 @@ setrec( octant_t* leaf, double ticksize, void* data )
     vs = 0;
     rho = 0;
 
-    points[0] = 0.01;
-    points[1] = 1;
-    points[2] = 1.99;
+    if (mode == 1){
+    	n_points = 1;
+    	points[0] = 1;
+    } else if (mode == 27){
+    	n_points = 3;
+    	points[0] = 0.01;
+    	points[1] = 1;
+    	points[2] = 1.99;
+    }
 
     halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
     edata->edgesize = ticksize * halfticks * 2;
@@ -1337,9 +1343,7 @@ setrec( octant_t* leaf, double ticksize, void* data )
         }
     }
 
-    g_props_min.Vs  = FLT_MAX;
-    g_props_min.Vp  = NAN;
-    g_props_min.rho = NAN;
+    g_props_vs_min = FLT_MAX;
 
     for ( i_x = 0; i_x < n_points; i_x++ ) {
 
@@ -1364,7 +1368,8 @@ setrec( octant_t* leaf, double ticksize, void* data )
     			res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
 
     			if (res != 0) {
-    				continue;
+                    goto outer_loop_label;
+    				// continue;
     			}
 
     			vp += g_props.Vp;
@@ -1372,35 +1377,41 @@ setrec( octant_t* leaf, double ticksize, void* data )
     			rho += g_props.rho;
 
 
-    			if ( g_props.Vs < g_props_min.Vs ) {
+    			if ( g_props.Vs < g_props_vs_min ) {
     				/* assign minimum value of vs to produce elements
     				 * that are small enough to rightly represent the model */
-    				g_props_min = g_props;
+    				g_props_vs_min = g_props.Vs;
+
+                    if ( g_props_vs_min <= Param.theVsCut ) {
+                        g_props_vs_min = Param.theVsCut;
+                    }
     			}
 
-    			if (g_props.Vs <= Param.theVsCut) {
+    			// if (g_props.Vs <= Param.theVsCut) {
     				/* stop early if needed, completely break out of all
     				 * the loops, the label is just outside the loop */
-    				goto outer_loop_label;
-    			}
+    				// goto outer_loop_label;
+    			// }
     		}
     	}
     }
+
  outer_loop_label: /* in order to completely break out from the inner loop */
 
     edata->Vp  = vp/27;
     edata->Vs  = vs/27;
     edata->rho = rho/27;
-    leaf->min_vs =  g_props_min.Vs;
+    leaf->min_vs = g_props_vs_min;
+    // fprintf(stdout, "%d\n", leaf->min_vs);
 
-
-    if (res != 0 && g_props_min.Vs == DBL_MAX) {
+    if (res != 0) {
     	/* all the queries failed, then center out of bound point. Set Vs
     	 * to force split */
-    	edata->Vs = Param.theFactor * edata->edgesize / 2;
+    	// edata->Vs = Param.theFactor * edata->edgesize / 2;
+        leaf->min_vs = Param.theFactor * edata->edgesize / 2;
+
     } else if (edata->Vs <= Param.theVsCut) {	/* adjust Vs and Vp */
     	double VpVsRatio = edata->Vp / edata->Vs;
-
     	edata->Vs = Param.theVsCut;
     	edata->Vp = Param.theVsCut * VpVsRatio;
     }
@@ -1870,7 +1881,7 @@ static cvmrecord_t *sliceCVM_old(const char *cvm_flatfile)
  *	   a leaf octant.
  *
  */
-void setrec(octant_t *leaf, double ticksize, void *data)
+void setrec(octant_t *leaf, double ticksize, void *data, int mode)
 {
     cvmrecord_t *agghit;
     edata_t *edata;
@@ -1938,6 +1949,8 @@ mesh_generate()
     double ppwl = Param.theFactor / Param.theFreq;
     double prevtref = 0, prevtbal = 0, prevtpar = 0;
     int64_t tote, mine, maxe;
+    int setrec_mode = 0;
+
 
     if (Global.myID == 0) {
         fprintf(stdout, "Meshing: ");
@@ -1946,7 +1959,7 @@ mesh_generate()
         } else {
             fprintf(stdout, "Progressive\n\n");
         }
-        fprintf(stdout, "Stage %14s Min %7s Max %5s Total    Time(s)","","","");
+    fprintf(stdout, "Stage %14s Min %7s Max %5s Total    Time(s)","","","");
         if (Param.theStepMeshingFactor == 0) {
             fprintf(stdout, "\n\n");
         } else {
@@ -2012,6 +2025,13 @@ mesh_generate()
 #endif
 
     for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
+    	// if use progressive meshing and reach the last round; change the setrec mode to use 27 points
+    	if (mstep == 0){
+   		   setrec_mode = 27;
+    	} else{
+            setrec_mode = 27;
+        }
+
 
         double myFactor = (double)(1 << mstep); // 2^mstep
         Param.theFactor = originalFactor / myFactor;
@@ -2022,7 +2042,9 @@ mesh_generate()
             fprintf(stdout, "Refining     ");
             fflush(stdout);
         }
-        if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+
+
+        if (octor_refinetree(Global.myOctree, toexpand, setrec, setrec_mode) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
         }
@@ -2052,7 +2074,7 @@ mesh_generate()
             fprintf(stdout, "Balancing    ");
             fflush(stdout);
         }
-        if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
+        if (octor_balancetree(Global.myOctree, setrec, setrec_mode, Param.theStepMeshingFactor) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
         }
@@ -2202,10 +2224,10 @@ toexpand(octant_t *leaf, double ticksize, const void *data) {
 
 	int      res;
 	edata_t *edata = (edata_t *)data;
-	float min_vs;
-	min_vs = leaf->min_vs;
-	float edgesize;
-	edgesize = edata->edgesize;
+	// float min_vs;
+	// min_vs = leaf->min_vs;
+	// float edgesize;
+	// edgesize = edata->edgesize;
 
 	if ( Param.includeBuildings == YES ) {
 		res = bldgs_toexpand( leaf, ticksize, edata, Param.theFactor );
@@ -2222,8 +2244,7 @@ toexpand(octant_t *leaf, double ticksize, const void *data) {
 		}
 	}
 
-	return vsrule(edgesize, min_vs, Param.theFactor);
-//	return vsrule(edata->edgesize, min_vs, Param.theFactor );
+    return vsrule(edata->edgesize, leaf->min_vs, Param.theFactor);
 }
 
 /**
@@ -7123,9 +7144,11 @@ mesh_correct_properties( etree_t* cvm )
     elem_t*  elemp;
     edata_t* edata;
     int32_t  eindex;
-    double   east_m, north_m, depth_m, VpVsRatio, RhoVpRatio;
-    int	     res, iNorth, iEast, iDepth, numPoints = 3;
-    double   vs, vp, rho;
+    // double   east_m, north_m, depth_m,
+    double VpVsRatio, RhoVpRatio;
+    // int	     res, iNorth, iEast, iDepth, numPoints = 3;
+    // double   vs, vp, rho;
+    double vs;
     double   points[3];
     int32_t  lnid0;
 

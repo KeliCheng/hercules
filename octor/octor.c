@@ -569,7 +569,7 @@ static int32_t oct_installleaf(tick_t lx, tick_t ly, tick_t lz,
 static int32_t oct_sprout(oct_t *leafoct, tree_t *tree);
 static void    oct_prune(oct_t *oct, tree_t *tree);
 static int32_t oct_expand(oct_t *leafoct, tree_t *tree,
-                          toexpand_t *toexpand, setrec_t *setrec);
+                          toexpand_t *toexpand, setrec_t *setrec, int setrec_mode);
 static oct_t * oct_shrink(oct_t *oct, tree_t *tree, unsigned char where,
                          toshrink_t *toshrink, setrec_t *setrec);
 
@@ -591,7 +591,7 @@ static void    tree_deletecom(tree_t *tree);
 static oct_t * tree_ascend(oct_t *oct, dir_t I, oct_stack_t *stackp);
 static oct_t * tree_descend(oct_t *oct, oct_stack_t *stackp);
 static int32_t tree_pushdown(oct_t *nbr, tree_t *tree, oct_stack_t *stackp,
-                             setrec_t *setrec);
+                             setrec_t *setrec, int setrec_mode);
 static oct_t * tree_searchoct(tree_t *tree, tick_t lx, tick_t ly,
                               tick_t lz, int8_t level, int32_t searchtype);
 
@@ -1499,7 +1499,7 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
          * still a little bit of mistery about very large meshes */
 		else {
 			if (childlevel == level) {
-                
+
 				/* Initialize the fields common to LEAF and INTERIOR*/
 				if( childoct->which != which ||
                    childoct->level != childlevel ||
@@ -1513,20 +1513,20 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
 							tree->procid);
 					MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
 					exit(1);
-                    
+
 				}
-                
+
 				childoct->appdata = NULL;
 				childoct->where = LOCAL;   /* Applicable to LEAF only */
-                
+
 				childoct->payload.leaf->next = childoct->payload.leaf->prev
                 = NULL;
-                
+
 				memcpy(childoct->payload.leaf->data, data, tree->recsize);
-                
+
 				//childoct->where = LOCAL;
 			}
-            
+
 		} /* if childoct != NULL && childoct->type == REMOTE  && if (childlevel == level)  */
 
         parentoct = childoct;
@@ -1611,6 +1611,8 @@ oct_sprout(oct_t *leafoct, tree_t *tree)
             child->ly = childly;
             child->lz = childlz;
             child->appdata = NULL;
+            // child->min_vs = leafoct->min_vs;
+            child->min_vs = 0;
 
             /* The payload of a leaf oct is not initialized */
             child->payload.leaf = NULL;
@@ -1677,7 +1679,7 @@ oct_prune(oct_t *oct, tree_t *tree)
  */
 static int32_t
 oct_expand(oct_t *leafoct, tree_t *tree, toexpand_t *toexpand,
-           setrec_t *setrec)
+           setrec_t *setrec, int setrec_mode)
 {
     int8_t which;
     const void *data;
@@ -1737,10 +1739,10 @@ oct_expand(oct_t *leafoct, tree_t *tree, toexpand_t *toexpand,
                 }
 
                 /* instantiate the child */
-                setrec((octant_t *)child, tree->ticksize, data);
+                setrec((octant_t *)child, tree->ticksize, data, setrec_mode);
 
                 /* This child intersects the domain of interest */
-                if (oct_expand(child, tree, toexpand, setrec) != 0)
+                if (oct_expand(child, tree, toexpand, setrec, setrec_mode) != 0)
                     return -1;
             }
         }
@@ -1833,7 +1835,7 @@ oct_shrink(oct_t *oct, tree_t *tree, unsigned char where,
                     return NULL;
                 }
 
-                setrec((octant_t *)oct, tree->ticksize, data);
+                // setrec((octant_t *)oct, tree->ticksize, data, 27);
             }
         }
     }
@@ -2335,7 +2337,7 @@ tree_descend(oct_t *oct, oct_stack_t *stackp)
      *
      * return oct;
      */
-    
+
     /* Note by: Yigit+Ricardo
      * This was one of the key change needed to be introduced for
      * progressive meshing to work. With this change and other
@@ -2374,7 +2376,7 @@ tree_descend(oct_t *oct, oct_stack_t *stackp)
  *  - Return 0 if OK, -1 if out of memory.
  */
 static int32_t
-tree_pushdown(oct_t *nbr, tree_t *tree, oct_stack_t *stackp, setrec_t *setrec)
+tree_pushdown(oct_t *nbr, tree_t *tree, oct_stack_t *stackp, setrec_t *setrec, int setrec_mode)
 {
     dir_t dir;
 
@@ -2408,7 +2410,7 @@ tree_pushdown(oct_t *nbr, tree_t *tree, oct_stack_t *stackp, setrec_t *setrec)
                     return -1;
                 }
 
-                setrec((octant_t *)child, tree->ticksize, data);
+                setrec((octant_t *)child, tree->ticksize, data, setrec_mode);
 
                 /* add child to the corresponding link level list */
                 oct_linkleaf(child, tree->toleaf);
@@ -3728,7 +3730,7 @@ node_setproperty ( tree_t             *tree,
         {
             masterLevel = vertex->level - 1;
             masterMask = (((tick_t)1) << (PIXELLEVEL - masterLevel)) - 1;
- 
+
             modX = (nx & masterMask) ? 1 : 0;
             modY = (ny & masterMask) ? 1 : 0;
             modZ = (nz & masterMask) ? 1 : 0;
@@ -3797,7 +3799,7 @@ node_setproperty ( tree_t             *tree,
             modX = (nx & masterMask) ? 1 : 0;
             modY = (ny & masterMask) ? 1 : 0;
             modZ = (nz & masterMask) ? 1 : 0;
-  
+
             switch (modX + modY + modZ) {
 
                 case (0):
@@ -4107,10 +4109,7 @@ octor_newtree(double x, double y, double z, int32_t recsize,
     tree->root->ly = 0;
     tree->root->lz = 0;
     tree->root->appdata = NULL;
-//    tree->root->vs = FLT_MAX;
-//    tree->root->vp = NAN;
-//    tree->root->rho = NAN;
-
+    tree->root->min_vs = 0;
 
     tree->root->parent = NULL;
     tree->root->payload.leaf = NULL;
@@ -4339,7 +4338,7 @@ octor_deletetree(octree_t *octree)
  *
  */
 extern int32_t
-octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec)
+octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec, int setrec_mode)
 {
     tree_t *tree = (tree_t *)octree;
     oct_t *oct;
@@ -4347,7 +4346,7 @@ octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec)
     oct = tree->firstleaf;
 
     while ((oct != NULL) && (oct->where == LOCAL)) {
-        if (oct_expand(oct, tree, toexpand, setrec) != 0) {
+        if (oct_expand(oct, tree, toexpand, setrec, setrec_mode) != 0) {
             fprintf(stderr,
                     "Proc %d (Failed): created %d leaves. min = %d max = %d\n",
                     tree->procid,
@@ -4400,7 +4399,7 @@ octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec)
  *
  */
 extern int32_t
-octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
+octor_balancetree(octree_t *octree, setrec_t *setrec, int setrec_mode, int theStepMeshingFactor)
 {
     int32_t lmax, gmax, lmin, gmin, level, threshold;
     oct_t *oct, *nbr;
@@ -4417,14 +4416,14 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
             localcount);
 #endif /* TREE_VERBOSE */
 
-    /* 
+    /*
      * Note by Yigit and Ricardo:
      * This block solved a misterious issue with progressive meshing.
      * We, however, don't know exactly all the implications it may have.
-     * 
+     *
      * START: Block by Yigit and Ricardo related to progressive meshing
      */
-    
+
     /* The neighboring relationship should be updated if  theStepMeshingFactor > 0*/
     if (tree->groupsize > 1) {
 
@@ -4594,7 +4593,7 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
         		}
 
         		if (nbr->where == LOCAL) {
-        			if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
+        			if (tree_pushdown(nbr, tree, &stack, setrec, setrec_mode) != 0) {
         				fprintf(stderr, "Thread %d: %s %d: ",
         						tree->procid, __FILE__, __LINE__);
         				fprintf(stderr, "Cannot pushdown local neighbor\n");
@@ -4744,7 +4743,7 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
                         exit(1);
                     }
 
-                    if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
+                    if (tree_pushdown(nbr, tree, &stack, setrec, setrec_mode) != 0) {
                         fprintf(stderr, "Thread %d: %s %d: ",
                                 tree->procid, __FILE__, __LINE__);
                         fprintf(stderr, "Cannot pushdown from anchor oct\n");
@@ -4871,7 +4870,7 @@ octor_carvebuildings(octree_t *octree, int flag,
     		 * tree->toleaf list is updated */
 
     		  oct_unlinkleaf(oct, tree->toleaf);
-    		  
+
     		/* Modify the statistics */
     		tree->leafcount[(int32_t)oct->level]--;
 
@@ -5328,7 +5327,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
     		exit(1);
     	}
     }
-    
+
     /* How many elements I have */
     ecount = tree_countleaves(tree);
 
