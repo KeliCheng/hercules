@@ -1835,7 +1835,7 @@ oct_shrink(oct_t *oct, tree_t *tree, unsigned char where,
                     return NULL;
                 }
 
-                // setrec((octant_t *)oct, tree->ticksize, data, 27);
+                setrec((octant_t *)oct, tree->ticksize, data, 27);
             }
         }
     }
@@ -2075,7 +2075,6 @@ static int64_t tree_countleaves(tree_t *tree)
     for (level = 0; level < TOTALLEVEL; level++) {
         localtotal += (int64_t)tree->leafcount[(int32_t)level];
     }
-
     return localtotal;
 }
 
